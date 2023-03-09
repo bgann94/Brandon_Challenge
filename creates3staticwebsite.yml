@@ -1,0 +1,79 @@
+---
+- name: Create and Deploy Static S3 Website
+  hosts: localhost
+  gather_facts: no
+  vars:
+    s3_bucket_name: my-static-website-bucket-192831
+    s3_region: us-east-1
+    s3_website_index_document: index.html
+    s3_website_redirect_all_requests_to: https://{{ s3_bucket_name }}.s3-website-{{ s3_region }}.amazonaws.com/
+  tasks:
+    - name: Create S3 bucket for static website
+      community.aws.s3_bucket:
+        name: "{{ s3_bucket_name }}"
+        region: "{{ s3_region }}"
+        state: present
+        website:
+          index_document: "{{ s3_website_index_document }}"
+          redirect_all_requests_to: "{{ s3_website_redirect_all_requests_to }}"
+      register: s3_bucket
+
+    - name: Upload HTML file to S3 bucket
+      community.aws.s3:
+        bucket: "{{ s3_bucket_name }}"
+        object: "{{ s3_website_index_document }}"
+        src: "{{ playbook_dir }}/index.html"
+      when: s3_bucket.changed
+
+    - name: Secure S3 website and redirect HTTP to HTTPS
+      community.aws.s3_bucket_policy:
+        bucket: "{{ s3_bucket_name }}"
+        policy: |
+          {
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Sid": "PublicReadGetObject",
+                      "Effect": "Allow",
+                      "Principal": "*",
+                      "Action": [
+                          "s3:GetObject"
+                      ],
+                      "Resource": [
+                          "arn:aws:s3:::{{ s3_bucket_name }}/*"
+                      ],
+                      "Condition": {
+                          "Bool": {
+                              "aws:SecureTransport": "true"
+                          }
+                      }
+                  }
+              ]
+          }
+
+    - name: Configure S3 bucket to redirect HTTP to HTTPS
+      community.aws.s3_bucket_website:
+        bucket: "{{ s3_bucket_name }}"
+        index_document: "{{ s3_website_index_document }}"
+        redirect_all_requests_to: "{{ s3_website_redirect_all_requests_to }}"
+        routing_rules:
+          - Condition:
+              HttpErrorCodeReturnedEquals: "403"
+            Redirect:
+              Protocol: "https"
+
+    - name: Test Static S3 Website
+      hosts: localhost
+      gather_facts: no
+      vars:
+        s3_bucket_name: my-static-website-bucket
+        s3_region: us-west-2
+      tasks:
+        - name: Check website response
+          uri:
+            url: "https://{{ s3_bucket_name }}.s3-website-{{ s3_region }}.amazonaws.com/"
+            return_content: yes
+          register: website_response
+
+        - name: Verify website content
+
